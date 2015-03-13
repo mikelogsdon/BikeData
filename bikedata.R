@@ -1,165 +1,92 @@
 
 #setwd("/storage/homes/michael/Seattle/")
-setwd("~/Documents/Seattle/")
+setwd("~/Documents/Seattle/BikeData/")
 
 library(ggplot2)
 library(reshape)
 library(reshape2)
 library(lubridate)
 library(car)
-
+library(plyr)
+library(foreign)
 library(RSocrata)
 
-counter_URLs <- c("https://data.seattle.gov/Transportation/Spokane-St-Bridge-Counter/upms-nr8w",
-                  "https://data.seattle.gov/Transportation/Fremont-Bridge-Hourly-Bicycle-Counts-by-Month-Octo/65db-xm6k",
-                  "https://data.seattle.gov/Transportation/Burke-Gilman-Trail-north-of-NE-70th-St-Bike-and-Pe/2z5v-ecg8",
-                  "https://data.seattle.gov/Transportation/NW-58th-St-Greenway-at-22nd-Ave-NW-Bike-Counter/47yq-6ugv",
-                  "https://data.seattle.gov/Transportation/MTS-Trail-west-of-I-90-Bridge/u38e-ybnc",
-                  "https://data.seattle.gov/Transportation/Elliott-Bay-Trail-in-Myrtle-Edwards-Park/4qej-qvrz",
-                  "https://data.seattle.gov/Transportation/Chief-Sealth-Trail-North-of-Thistle/uh8h-bme7",
-                  "https://data.seattle.gov/Transportation/39th-Ave-NE-Greenway-at-NE-62nd-St/3h7e-f49s",
-                  "https://data.seattle.gov/Transportation/26th-Ave-SW-Greenway-at-SW-Oregon-St/mefu-7eau")
+source("bikeDataFunctions.R")
 
-counter_locs <- c("Spokane", "Fremont", "BG70", "NW58", "MTS90", "Elliot", "Sealth", "NE62", "Oregon")
-counter_full <- c("Spokane St", "Fremont Bridge", "Burke Gilman Sandpoint", "NW 58th & 22nd NW (Ballard)",
-                  "I90 Bridge", "Elliot Bay Trail", "Sealth (South Seattle)", "NE 62nd & 39th NE", "Oregon St (West Seattle)")
-counter_dset <- data.frame("Location" = counter_locs, "Long_Location" = counter_full)
-
-dsets <- list()
-dsets_long <- list()
-
-NSEW <- c("North", "South", "East", "West")
-bNSEW <- paste("Bike", NSEW, sep = ".")
-for(i in seq_along(counter_URLs)) {
-  dsets[[i]] <- read.socrata(counter_URLs[i])
-
-}
-lapply(dsets, head)
-
-for(i in seq_along(counter_URLs)) {
-  for(vname in NSEW) {
-    tmp <- grep(paste("^", vname, "$", sep = ""), names(dsets[[i]]))
-    if(length(tmp)) {
-      names(dsets[[i]])[tmp] <- paste("Bike", vname, sep = ".")
-    }
-  }
-  #stupid fremont special case
-  tmp <- grep("Fremont.Bridge.NB", names(dsets[[i]]))
-  if(length(tmp)) {
-    names(dsets[[i]])[tmp] <- "Bike.North"
-  }
-  tmp <- grep("Fremont.Bridge.SB", names(dsets[[i]]))
-  if(length(tmp)) {
-    names(dsets[[i]])[tmp] <- "Bike.South"
-  }
-  
-  #Figure out variables to keep...
-  vtokeep <- grep("Ped|Bike|Date", names(dsets[[i]]))
-  dsets[[i]] <- dsets[[i]][, vtokeep]
-  dsets[[i]]["Location"] <- counter_locs[i]
-  
-  #Make a bicycle total variable
-  bike_vars <- grep("Bike", names(dsets[[i]]))
-  dsets[[i]]["Bike.Total"] <- apply(dsets[[i]][, bike_vars], 1, sum)
-  
-  dsets_long[[i]] <- reshape::melt(dsets[[i]], id.vars = c("Date", "Location"))
-}
-lapply(dsets, head)
-bike <- do.call("rbind", dsets_long)
-bike <- merge(bike, counter_dset)
-
-bike$date <- as.Date(bike$Date)
-bike$week <- week(bike$Date)
-bike$hour <- hour(bike$Date)
-bike$wday <- wday(bike$date)
-bike$weekday <- FALSE
-bike$weekday[bike$wday > 1 & bike$wday < 7] <- TRUE
-
+#Read the data from the SDOT website
+bike <- readBikeData()
 
 #Need to remove bad data from Fremont bridge counter
 ggplot(bike[bike$Location == "Fremont", ]) + theme_bw() + 
   geom_point(aes(x = Date, y = value))
 bike[which(bike$Location == "Fremont" & bike$value > 1000), ]
 #Need to take out April 23, 25, 28, and 29
-badrows <- which(bike$Location == "Fremont" & bike$date %in% as.Date(c("2014-04-23", "2014-04-25", "2014-04-28", "2014-04-29", "2012-10-02")))
+badrows <- which(bike$Location == "Fremont" & bike$date %in% as.Date(c("2014-04-23", "2014-04-25", "2014-04-26","2014-04-27","2014-04-28", "2014-04-29", "2012-10-02")))
 bike <- bike[-badrows,]
 ggplot(bike[bike$Location == "Fremont", ]) + theme_bw() + 
   geom_point(aes(x = Date, y = value))
 
-
-#Make a daily dataset
-daily <- aggregate(value ~ variable + date + Location + Long_Location, data = bike, FUN = sum)
-daily <- daily[daily$date >= "2014-01-01",]
-daily$ltime <- as.POSIXlt(daily$date)
-daily$wday <- daily$ltime$wday
-daily$weekday <- daily$wday > 0 & daily$wday < 6
-daily$Month <- as.character(daily$ltime, format = "%B")
-
-#Make a weekly dataset
-weekly <- bike[bike$date >= "2014-01-01", ]
-weekly <- aggregate(value ~ variable + week + Location, data = weekly, FUN = sum)
-weekly <- subset(weekly, variable == "Bike.Total")
-
-#Get Means...
-daily_means <- aggregate(value ~ Location + Long_Location, FUN = mean, data = daily[daily$variable == "Bike.Total", ])
-daily_means$y <- 5500
-daily_means$x <- as.Date("2014-03-01")
-daily_means$lab <- paste("YTD Average\n", round(daily_means$value, 0), "trips per day")
-
-#Plot all by daily data
-daily_all <- ggplot(daily[daily$variable == "Bike.Total", ]) + theme_bw() + 
-  geom_point(aes(x = date, y = value, col = Long_Location)) + 
-  geom_smooth(aes(x = date, y = value, col = Long_Location), se = FALSE) + 
-  facet_wrap(~Long_Location) + ggtitle("Seattle Bike Counters 2014 - Daily Total Trips\nData Through July 2014") + 
-  xlab("Date") + scale_colour_discrete(name = "Location") + ylab("Total Daily Trips") + 
-  geom_text(data = daily_means, aes(x = x, y = y, label = lab), size = 4)
-daily_all
-ggsave("daily_all.png", daily_all, width = 11, height = 8)
-
-daily[which(daily$Location == "NW58" & daily$value > 1000), ]
+#Merge in the weather data
+bikeplus <- mergeWeather(bike, wfile = "WASeattle24233hrly.dta")
+if(nrow(bikeplus) != nrow(bike)) stop("Error in merging weather")
+bike <- bikeplus
+rm(bikeplus)
 
 
-#Now w/ log
-daily_all_log <- ggplot(daily[daily$variable == "Bike.Total", ]) + theme_bw() + 
-  geom_point(aes(x = date, y = value, col = Long_Location)) + 
-  geom_smooth(aes(x = date, y = value, col = Long_Location), se = FALSE) + 
-  facet_wrap(~Long_Location) + ggtitle("Seattle Bike Counters 2014 - Daily Total Trips") + 
-  xlab("Date") + scale_colour_discrete(name = "Location") + ylab("Total Daily Trips") + 
-  scale_y_log10(breaks = c(5, 10, 30, 50, 100, 300, 500, 1000, 3000, 5000))
-daily_all_log
-ggsave("daily_all_log.png", daily_all_log, width = 11, height = 8)
+#Look at just 2014
+bike <- bike[which(bike$date >= "2014-01-01" & bike$date < "2015-01-01"), ]
 
-#Plot all by hour of day
-#Need means by location
-means <- aggregate(value ~ Long_Location + hour + weekday, FUN = mean, data = bike[bike$variable == "Bike.Total",])
-hourly_all <- ggplot(bike[bike$variable == "Bike.Total", ]) + theme_bw() + 
-  geom_line(aes(x = hour, y = value, col = weekday, group = date), alpha = .5) +
-  facet_wrap(~Long_Location) + xlab("Hour of Day") + ylab("Total Trips") + 
-  ggtitle("Seattle Bike Counters 2014 - Hourly Total Trips\nData Through July 2014") + 
-  scale_colour_discrete(name = "", labels = c("Weekend", "Weekday"))
-hourly_all
-ggsave("hourly_all.png", hourly_all, width = 11, height = 8)
+#Add a variable for proportion of daily trips that fell in that hour
+bikeplus <- addFracByDay(bike)
+if(nrow(bike) != nrow(bikeplus)) stop("Error in calculating trip fractions by day")
+bike <- bikeplus
+rm(bikeplus)
+
+#We want to make a daily dataset... first, though we need to make sure that
+#we're not losing too much data. Looks like most of it is Chief Sealth
+sum(is.na(bike$value))
+table(bike$Long_Location[is.na(bike$value)])
+daily <- makeDaily(bike)
+
+#Look at some plots of the daily data
+dailyPlot(daily, "Bike.Total")
+dailyPlot(daily, "Bike.Total", log = TRUE)
+dailyPlot(daily, "Bike.North")
+dailyPlot(daily[daily$value < 5000, ], "Ped.Total")
+
+#Look at some plots by hour of day
+hourlyAll <- hourlyPlot(bike, "Bike.Total")
+print(hourlyAllPed <- hourlyPlot(bike, "Ped.Total"))
+print(hourlyAllBikeNorth <- hourlyPlot(bike, "Bike.North", type="freq"))
+print(hourlyAllBikeSouth <- hourlyPlot(bike, "Bike.South", type="freq"))
+print(hourlyAllBikeWest <- hourlyPlot(bike, "Bike.West", type="freq"))
 
 
-#Try a bit more tricky of a plot... normalize trips by location by day as probability distributions over hours
-bike$dateloc <- factor(paste(bike$date, bike$Location))
-tmp <- by(bike[bike$variable == "Bike.Total", ], bike$dateloc[bike$variable == "Bike.Total"], function(x) {
-  x$value_norm <- x$value / sum(x$value)
+#Look at some weather plots...
+
+
+#Plot daily totals by temperature, precipitation, Location
+#Need a 2-day running total
+daily <- arrange(daily, Long_Location, date)
+daily$precip2day <- filter(daily$precip, c(1, 1), sides = 1)
+daily <- do.call('rbind', by(daily, interaction(daily$Long_Location, daily$variable), function(x) {
+  x <- arrange(x, date)
+  x$precip2day <- as.numeric(filter(x$precip, c(1, 1), sides = 1))
   x
-})
-bikenew <- do.call("rbind", tmp)
-dim(bikenew)
-head(bikenew)
+}))
+row.names(daily) <- NULL
+daily <- arrange(daily, Long_Location, variable, date)
+daily[1:20,]
+weatherPlot <- ggplot(daily) + theme_bw() + 
+  geom_point(aes(x = temp, y = value, col = weekday, size = precip)) +
+  facet_wrap(~Long_Location) +
+  geom_smooth(aes(x = temp, y = value, col = weekday), method = "lm", se = FALSE)
+weatherPlot
+ggsave(file = "weatherPlot.png", weatherPlot)
 
-means2 <- aggregate(value_norm ~ Long_Location + hour + weekday, FUN = mean, data = bikenew)
-hourly_all2 <- ggplot(bikenew) + theme_bw() + 
-  geom_line(aes(x = hour, y = value_norm, col = weekday, group = date), alpha = .5) +
-  facet_wrap(~Long_Location) + xlab("Hour of Day") + ylab("Proportion of Day's Trips in That Hour") + 
-  ggtitle("Seattle Bike Counters 2014 - Hourly Distribution of Trips\nData Through July 2014") + 
-  scale_colour_discrete(name = "", labels = c("Weekend", "Weekday")) + ylim(0, .3)
-hourly_all2
-ggsave("hourly_all2.png", hourly_all2, width = 11, height = 8)
-
+subset(daily, Location == "Elliot" & value > 5000)
+daily[daily$Location == "Elliot" & daily$variable == "Ped.Total" & daily$date %in% c("2014-08016")]
+bike[bike$Location == "Elliot" & bike$date == "2014-08-16" & bike$variable == "Bike.Total", ]
 subset(bike, Location == "BG70" & hour < 9 & value > 400 & variable == "Bike.Total")
 
 bikenew$DST <- FALSE
@@ -205,6 +132,105 @@ ggplot(subset(weekly, variable == "Bike.Total")) + theme_bw() +
   geom_smooth(aes(x = week, y = value, col = Location), se = FALSE)
 
 
+#By counter, calculate commute shares...
+head(bike)
+table(bike$variable)
+
+bikex <- bike[bike$date >= "2014-01-01" & bike$variable == "Bike.Total", ]
+commuteShares <- ddply(bikex[bikex$wday %in% c(1:5), ], 
+                       .(Long_Location, date), function(x) {
+                         print(x$Long_Location[1])
+                         print(x$date[1])
+                         x$commute <- 0
+                         x$commute[x$hour %in% c(6, 7, 8, 16, 17, 18)] <- 1
+                         if(sum(!is.na(x$value))) {
+                           aggregate(value ~ commute, data = x, FUN = sum)
+                         } else {
+                           return(NULL)
+                         }
+                       })
+head(commuteShares)
+ggplot(commuteShares) + theme_bw() + 
+  geom_histogram(aes(x = value, fill = factor(commute)), position = "dodge") + 
+  facet_wrap(~Long_Location) + 
+  scale_x_log10(breaks = c(1, 10, 100, 1000))
+#asdf
+
+cFracs <- ddply(commuteShares, .(Long_Location), function(x) {
+  tmp <- aggregate(value ~ commute, data = x, FUN = sum)
+  frac <- tmp$value[tmp$commute == 1] / sum(tmp$value)
+  data.frame("frac" = frac)
+})
+cFracs <- arrange(cFracs, -frac)
+cFracs$frac <- paste(round(cFracs$frac * 100, 0), "%", sep = "")
+cFracs
+
+
+wFracs <- do.call("rbind", by(bikex, bikex$Long_Location, function(x) {
+  tmp <- aggregate(value ~ weekday, data = x, FUN = sum)
+  frac <- tmp$value[tmp$weekday == FALSE] / sum(tmp$value)
+  data.frame("Long_Location" = x$Long_Location[1], "frac" = frac)
+}))
+wFracs <- arrange(wFracs, -frac)
+cFracs$frac <- paste(round(cFracs$frac * 100, 0), "%", sep = "")
+
+
+
+
+#Look for hourly oddities w/ a log-linear model???
+bikex <- bike[bike$date >= "2014-01-01" & bike$variable == "Bike.Total" & 
+                bike$date < "2015-01-01", ]
+bikex <- bikex[which(!is.na(bikex$value)), ]
+fremont <- bikex[bikex$Long_Location == "Fremont Bridge", ]
+dset <- bikex[bikex$Location == "Spokane", ]
+hourlyMod <- function(dset) {
+  dset$sin1 <- sin(as.integer(dset$date) * 2 * pi / 365)
+  dset$cos1 <- cos(as.integer(dset$date) * 2 * pi / 365)
+  dset$sin2 <- sin(as.numeric(dset$Date) * 2 * pi / 3600 / 24)
+  dset$cos2 <- cos(as.numeric(dset$Date) * 2 * pi / 3600 / 24)
+  dset$lValue <- log(1 + dset$value)
+  mod <- glm(value ~ factor(wday) * sin1 * factor(hour) * weekday2 + 
+              factor(wday) * cos1 * factor(hour) * weekday2,
+            data = dset[which(!is.na(dset$value)), ], family = "poisson")
+  summary(mod)
+  dset$fitted <- exp(predict(mod, dset))
+  ggplot(dset) + theme_bw() + 
+    geom_point(aes(x = value, y = fitted), alpha = .1) + 
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed") + 
+    scale_x_log10(breaks = c(1, 10, 100, 500)) + 
+    scale_y_log10(breaks = c(1, 10, 100, 500))
+  
+  dset$resid <- residuals(mod)
+  dset <- subset(dset, select = c(Location, value, date, hour, weekday2, fitted, resid))
+  dset <- arrange(dset, -resid)
+  high <- dset[1:20, ]
+  high <- arrange(high, date, hour)
+  head(dset, 20)
+  dset <- arrange(dset, resid)
+  low <- dset[1:20, ]
+  low <- arrange(low, date, hour)
+  low
+}
+
+oneDay(dset, "2014-03-01", ylim = c(0, 150))
+oneDay(dset, "2014-03-02", ylim = c(0, 150))
+oneDay(dset, "2014-03-03", ylim = c(0, 150))
+oneDay(dset, "2014-03-04", ylim = c(0, 150))
+oneDay(dset, "2014-03-05", ylim = c(0, 150))
+oneDay(dset, "2014-03-06", ylim = c(0, 150))
+oneDay(dset, "2014-03-07", ylim = c(0, 150))
+oneDay(dset, "2014-03-08", ylim = c(0, 150))
+oneDay <- function(dset, day, ylim = NULL) {
+  p <- ggplot(dset[dset$date == day, ]) + theme_bw() + 
+    geom_point(aes(x = hour, y = value)) + 
+    geom_line(aes(x = hour, y = fitted))
+  if(!is.null(ylim)) {
+    p <- p + ylim(ylim)
+  }
+  p
+}
+
+View(bikex)
 
 #Merge in the weather?
 #This code only worked at my Ecotope computer, where Ecotope had the weather data
@@ -426,3 +452,10 @@ summary(resid_mod)
 
 
 
+
+
+
+#Make a weekly dataset
+daily$ltime <- NULL
+weekly <- ddply(daily, .(variable, week, Location), nrow)
+weekly <- subset(weekly, variable == "Bike.Total")
