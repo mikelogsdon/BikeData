@@ -136,6 +136,8 @@ addFracByDay <- function(bike) {
 
 
 dailyPlot <- function(daily, variable, log = FALSE) {
+  daily <- removeBlankLocs(daily, variable)
+  
   #Get Means...
   daily_means <- aggregate(value ~ Location + Long_Location + weekday, FUN = mean, data = daily[daily$variable == variable, ])
   daily_means <- ddply(daily_means, .(Location, Long_Location), function(x) {
@@ -158,12 +160,16 @@ dailyPlot <- function(daily, variable, log = FALSE) {
 
 
 hourlyPlot <- function(bike, variable, type = "count") {
+  bike <- removeBlankLocs(bike, variable)
+  
   ptitle <- paste("Seattle Pedestrian Counters 2014 - Hourly", gsub("\\.", " ", variable), "Trips")
+  
+  #Only use applicable counters
   
   if(type == "count") {
     #Plot all by hour of day
     #Need means by location
-    means <- aggregate(value ~ Long_Location + hour + weekday, FUN = mean, data = bike[bike$variable == "Bike.Total",])
+    means <- aggregate(value ~ Long_Location + hour + weekday, FUN = mean, data = bike[bike$variable == variable,])
     hourly_all <- ggplot(bike[bike$variable == variable, ]) + theme_bw() + 
       geom_line(aes(x = hour, y = value, col = weekday, group = date), alpha = .5) +
       facet_wrap(~Long_Location) + xlab("Hour of Day") + ylab("Total Trips") + 
@@ -171,8 +177,8 @@ hourlyPlot <- function(bike, variable, type = "count") {
       scale_colour_discrete(name = "")
     return(hourly_all)
   } else if(type == "freq") {
-    means2 <- aggregate(value_norm ~ Long_Location + hour + weekday, FUN = mean, data = bikenew)
-    hourly_all2 <- ggplot(bikenew) + theme_bw() + 
+    #means2 <- aggregate(value_norm ~ Long_Location + hour + weekday, FUN = mean, data = bike)
+    hourly_all2 <- ggplot(bike[bike$variable == variable, ]) + theme_bw() + 
       geom_line(aes(x = hour, y = value_norm, col = weekday, group = date), alpha = .5) +
       facet_wrap(~Long_Location) + xlab("Hour of Day") + ylab("Proportion of Day's Trips in That Hour") + 
       ggtitle(ptitle) + 
@@ -181,4 +187,53 @@ hourlyPlot <- function(bike, variable, type = "count") {
   }
   
 }
+
+
+weatherPlot <- function(daily, variable) {
+  daily <- removeBlankLocs(daily, variable)
+  
+  #Scale counts by max
+  daily <- do.call('rbind', by(daily, daily$Location, function(x) {
+    x$value2 <- x$value / max(x$value[x$variable == variable])
+    x
+  }))
+  row.names(daily) <- NULL
+  
+  maxes <- aggregate(value ~ Long_Location, data = daily[daily$variable == variable, ], FUN = max)
+  maxes$label <- paste(maxes$Long_Location, "\nMax Daily Crossings =", maxes$value)
+  daily <- merge(daily, subset(maxes, select = c(Long_Location, label)))
+  
+  ggplot(daily[daily$variable == variable, ]) + theme_bw() + 
+    geom_point(aes(x = temp, y = value2, col = weekday)) + 
+    geom_smooth(aes(x = temp, y = value2, col = weekday), method = "lm", se = FALSE) + 
+    facet_wrap(~label) + 
+    ggtitle(paste("Daily", gsub("\\.", " ", variable), "Crossings by Temperature\nScaled by Max Counts for each Counter, for Presentation")) + 
+    xlab("Daily Average Temperature (F)") +
+    ylab("Daily Crossings as a Fraction of Max Crossings (For Plot Scale)")
+  
+}
+
+removeBlankLocs <- function(dset, variable) {
+  #Remove any location for which there are no observations for this variable
+  obs <- aggregate(value ~ Long_Location, data = dset[dset$variable == variable, ], FUN = sum)
+  locsToUse <- obs$Long_Location[obs$value > 0]
+  dset <- dset[dset$Long_Location %in% locsToUse, ]
+  dset
+}
+
+
+weatherPlotLocation <- function(daily, variable, loc) {
+  
+  ggplot(daily[daily$variable == variable & daily$Location == loc, ]) + theme_bw() + 
+    geom_point(aes(x = temp, y = value, col = weekday, size = precip)) + 
+    geom_smooth(aes(x = temp, y = value, col = weekday), method = "lm", se = FALSE) + 
+    facet_wrap(~Month) + 
+    ggtitle("Daily Counts by Weather") + 
+    xlab("Daily Average Temperature (F)") +
+    ylab("Count")
+  
+}
+
+
+
 

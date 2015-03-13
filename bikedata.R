@@ -1,6 +1,6 @@
 
 #setwd("/storage/homes/michael/Seattle/")
-setwd("~/Documents/Seattle/BikeData/")
+setwd("~/Documents/Seattle/BikeData/BikeData/")
 
 library(ggplot2)
 library(reshape)
@@ -55,11 +55,35 @@ dailyPlot(daily, "Bike.North")
 dailyPlot(daily[daily$value < 5000, ], "Ped.Total")
 
 #Look at some plots by hour of day
-hourlyAll <- hourlyPlot(bike, "Bike.Total")
+print(hourlyAll <- hourlyPlot(bike, "Bike.Total"))
 print(hourlyAllPed <- hourlyPlot(bike, "Ped.Total"))
 print(hourlyAllBikeNorth <- hourlyPlot(bike, "Bike.North", type="freq"))
 print(hourlyAllBikeSouth <- hourlyPlot(bike, "Bike.South", type="freq"))
 print(hourlyAllBikeWest <- hourlyPlot(bike, "Bike.West", type="freq"))
+print(hourlyAllBikeEast <- hourlyPlot(bike, "Bike.East", type="freq"))
+
+print(dailyWeather <- weatherPlot(daily, "Ped.Total"))
+print(dailyWeatherFremont <- weatherPlotLocation(daily, "Bike.Total", "Fremont"))
+
+
+lapply(unique(bike$variable), function(var) {
+  var2 <- gsub("\\.", "", var)
+  #Plot of hourly counts
+  ggsave(file = paste(var2, "Hourly.png", sep = ""), 
+         hourlyPlot(bike, var, type = "count"))
+  
+  #Plot of hourly frequencies
+  ggsave(file = paste(var2, "HourlyFreq.png", sep = ""), 
+         hourlyPlot(bike, var, type = "freq"))
+  
+  #Plot of daily counts
+  ggsave(file = paste(var2, "Daily.png", sep = ""), 
+         dailyPlot(daily, var))
+  
+  #Plot of daily counts by weather
+  ggsave(file = paste(var2, "DailyWeather.png", sep = ""), 
+         weatherPlot(daily, var))
+})
 
 
 #Look at some weather plots...
