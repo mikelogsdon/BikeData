@@ -14,8 +14,8 @@ readBikeData <- function() {
                     "https://data.seattle.gov/Transportation/26th-Ave-SW-Greenway-at-SW-Oregon-St/mefu-7eau")
   
   counter_locs <- c("Spokane", "Fremont", "BG70", "NW58", "MTS90", "Elliot", "Sealth", "NE62", "Oregon")
-  counter_full <- c("Spokane St", "Fremont Bridge", "Burke Gilman Sandpoint", "NW 58th & 22nd NW (Ballard)",
-                    "I90 Bridge", "Elliot Bay Trail", "Sealth (South Seattle)", "NE 62nd & 39th NE", "Oregon St (West Seattle)")
+  counter_full <- c("Spokane St Viaduct", "Fremont Bridge", "Burke Gilman at Sandpoint", "NW 58th & 22nd NW (Ballard)",
+                    "MTS I-90 Trail", "Elliot Bay Trail", "Chief Sealth (South Seattle)", "NE 62nd & 39th NE", "Oregon St (West Seattle)")
   counter_dset <- data.frame("Location" = counter_locs, "Long_Location" = counter_full)
   
   dsets <- list()
@@ -119,6 +119,15 @@ makeDaily <- function(bikeplus) {
   daily$wday <- daily$ltime$wday
   #daily$weekday <- daily$wday > 0 & daily$wday < 6
   daily$Month <- as.character(daily$ltime, format = "%B")
+
+  #Add a lagged precip
+  daily <- do.call('rbind', by(daily, interaction(daily$Long_Location, daily$variable), function(x) {
+    x <- arrange(x, date)
+    x$precip2day <- as.numeric(filter(x$precip, c(1, 1), sides = 1))
+    x
+  }))
+  row.names(daily) <- NULL
+  daily <- arrange(daily, Long_Location, variable, date)
   daily
 }
 
@@ -159,12 +168,21 @@ dailyPlot <- function(daily, variable, log = FALSE) {
 }
 
 
-hourlyPlot <- function(bike, variable, type = "count") {
+hourlyPlot <- function(bike, variable, type = "count", means = FALSE) {
+  #Only use applicable counters
   bike <- removeBlankLocs(bike, variable)
   
   ptitle <- paste("Seattle Pedestrian Counters 2014 - Hourly", gsub("\\.", " ", variable), "Trips")
   
-  #Only use applicable counters
+  #If means, aggregate
+  if(means) {
+    bike <- ddply(bike, .(Long_Location, hour, weekday, variable), function(x) {
+      c("value" = mean(x$value, na.rm = TRUE),
+        "value_norm" = mean(x$value_norm, na.rm = TRUE))
+    })
+    bike$date <- bike$weekday
+    ptitle <- paste("Seattle Pedestrian Counters 2014 - Mean Hourly", gsub("\\.", " ", variable), "Trips")
+  }
   
   if(type == "count") {
     #Plot all by hour of day
@@ -235,5 +253,27 @@ weatherPlotLocation <- function(daily, variable, loc) {
 }
 
 
+
+hourlyPlotLocation <- function(bike, location, variable = "Bike.Total") {
+  dset <- bike[bike$Location == location & bike$variable == variable, ]
+  longLoc <- dset$Long_Location[1]
+  ggplot(dset) + theme_bw() + 
+    geom_line(aes(x = hour, y = value, group = date, col = weekday)) + 
+    facet_wrap(~Month) +
+    ggtitle(paste(gsub("\\.", " ", variable), "Trips By Hour of Day -", longLoc)) + 
+    xlab("Hour of Day") + ylab("Total Crossings")
+  
+}
+
+weatherPlotLocation <- function(daily, location, variable = "Bike.Total") {
+  dset <- daily[daily$Location == location & daily$variable == variable, ]
+  longLoc <- dset$Long_Location[1]
+  ggplot(dset) + theme_bw() + 
+    geom_point(aes(x = temp, y = value, col = weekday, size = precip2day)) + 
+    ggtitle(paste(gsub("\\.", " ", variable), "Trips By Temperature -", longLoc)) + 
+    xlab("Daily Average Temperature") + ylab("Total Crossings") + 
+    geom_smooth(method = "lm", aes(x = temp, y = value, col = weekday, linetype = weekday), se = FALSE) +
+    scale_size_continuous(range = c(1.5,6))
+}
 
 
